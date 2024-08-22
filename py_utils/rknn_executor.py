@@ -1,5 +1,10 @@
-from rknn.api import RKNN
-
+# from rknn.api import RKNN
+try:
+    from rknn.api import RKNN
+except ImportError:
+    print('import rknn failed,try to import rknnlite')
+    RKNNLite = True
+    from rknnlite.api import RKNNLite as RKNN
 
 class RKNN_model_container():
     def __init__(self, model_path, target=None, device_id=None) -> None:
@@ -9,7 +14,8 @@ class RKNN_model_container():
         rknn.load_rknn(model_path)
 
         print('--> Init runtime environment')
-        if target==None:
+        # if target==None:
+        if RKNNLite or target==None:
             ret = rknn.init_runtime()
         else:
             ret = rknn.init_runtime(target=target, device_id=device_id)

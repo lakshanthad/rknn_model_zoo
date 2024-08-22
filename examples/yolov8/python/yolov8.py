@@ -256,6 +256,8 @@ if __name__ == '__main__':
             input_data = img.transpose((2,0,1))
             input_data = input_data.reshape(1,*input_data.shape).astype(np.float32)
             input_data = input_data/255.
+        elif platform == 'rknn':
+            input_data = np.expand_dims(img, 0)
         else:
             input_data = img
 
