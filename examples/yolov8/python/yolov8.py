@@ -34,18 +34,24 @@ coco_id_list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 2
          35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
          64, 65, 67, 70, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 84, 85, 86, 87, 88, 89, 90]
 
+def xywh2xyxy(x):
+    assert x.shape[-1] == 4, f"input shape last dimension expected 4 but input shape is {x.shape}"
+    y = np.empty_like(x)  # faster than clone/copy
+    dw = x[..., 2] / 2  # half-width
+    dh = x[..., 3] / 2  # half-height
+    y[..., 0] = x[..., 0] - dw  # top left x
+    y[..., 1] = x[..., 1] - dh  # top left y
+    y[..., 2] = x[..., 0] + dw  # bottom right x
+    y[..., 3] = x[..., 1] + dh  # bottom right y
+    return y
 
-def filter_boxes(boxes, box_confidences, box_class_probs):
-    """Filter boxes with object threshold.
-    """
-    box_confidences = box_confidences.reshape(-1)
-    candidate, class_num = box_class_probs.shape
-
+def filter_boxes(boxes, box_class_probs):
+    """Filter boxes with object threshold."""
     class_max_score = np.max(box_class_probs, axis=-1)
     classes = np.argmax(box_class_probs, axis=-1)
 
-    _class_pos = np.where(class_max_score* box_confidences >= OBJ_THRESH)
-    scores = (class_max_score* box_confidences)[_class_pos]
+    _class_pos = np.where(class_max_score >= OBJ_THRESH)
+    scores = class_max_score[_class_pos]
 
     boxes = boxes[_class_pos]
     classes = classes[_class_pos]
@@ -85,60 +91,15 @@ def nms_boxes(boxes, scores):
     keep = np.array(keep)
     return keep
 
-def dfl(position):
-    # Distribution Focal Loss (DFL)
-    import torch
-    x = torch.tensor(position)
-    n,c,h,w = x.shape
-    p_num = 4
-    mc = c//p_num
-    y = x.reshape(n,p_num,mc,h,w)
-    y = y.softmax(2)
-    acc_metrix = torch.tensor(range(mc)).float().reshape(1,1,mc,1,1)
-    y = (y*acc_metrix).sum(2)
-    return y.numpy()
-
-
-def box_process(position):
-    grid_h, grid_w = position.shape[2:4]
-    col, row = np.meshgrid(np.arange(0, grid_w), np.arange(0, grid_h))
-    col = col.reshape(1, 1, grid_h, grid_w)
-    row = row.reshape(1, 1, grid_h, grid_w)
-    grid = np.concatenate((col, row), axis=1)
-    stride = np.array([IMG_SIZE[1]//grid_h, IMG_SIZE[0]//grid_w]).reshape(1,2,1,1)
-
-    position = dfl(position)
-    box_xy  = grid +0.5 -position[:,0:2,:,:]
-    box_xy2 = grid +0.5 +position[:,2:4,:,:]
-    xyxy = np.concatenate((box_xy*stride, box_xy2*stride), axis=1)
-
-    return xyxy
-
 def post_process(input_data):
-    boxes, scores, classes_conf = [], [], []
-    defualt_branch=3
-    pair_per_branch = len(input_data)//defualt_branch
-    # Python 忽略 score_sum 输出
-    for i in range(defualt_branch):
-        boxes.append(box_process(input_data[pair_per_branch*i]))
-        classes_conf.append(input_data[pair_per_branch*i+1])
-        scores.append(np.ones_like(input_data[pair_per_branch*i+1][:,:1,:,:], dtype=np.float32))
-
-    def sp_flatten(_in):
-        ch = _in.shape[1]
-        _in = _in.transpose(0,2,3,1)
-        return _in.reshape(-1, ch)
-
-    boxes = [sp_flatten(_v) for _v in boxes]
-    classes_conf = [sp_flatten(_v) for _v in classes_conf]
-    scores = [sp_flatten(_v) for _v in scores]
-
-    boxes = np.concatenate(boxes)
-    classes_conf = np.concatenate(classes_conf)
-    scores = np.concatenate(scores)
-
+    # input_data shape is [B, 84, 8400]
+    input_data = input_data.transpose(0, 2, 1)  # [B, 8400, 84]
+    boxes = input_data[:, :, :4]  # [B, 8400, 4]
+    classes_conf = input_data[:, :, 4:]  # [B, 8400, 80]
+    
     # filter according to threshold
-    boxes, classes, scores = filter_boxes(boxes, scores, classes_conf)
+    boxes, classes, scores = filter_boxes(boxes, classes_conf)
+    boxes = xywh2xyxy(boxes)
 
     # nms
     nboxes, nclasses, nscores = [], [], []
@@ -262,7 +223,7 @@ if __name__ == '__main__':
             input_data = img
 
         outputs = model.run([input_data])
-        boxes, classes, scores = post_process(outputs)
+        boxes, classes, scores = post_process(outputs[0])
 
         if args.img_show or args.img_save:
             print('\n\nIMG: {}'.format(img_name))
